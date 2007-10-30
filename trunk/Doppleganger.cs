@@ -816,10 +816,10 @@ namespace utils
 		/// An explanatory _note to be prefixed to the description of the generated assembly source.
 		/// </summary>
 		protected readonly string assemblyDescriptionAttributeMarkup =
-				"This file is a mock-up of the original assembly.  This assembly only exposes the public API to be used in a testing compilation environment.  ";
+				"This file is a doppleganger of the original assembly.  This assembly only exposes the public API to be used in a testing compilation environment.  ";
 
 		/// <summary>
-		/// Should the specified attribute type be generated in the mock source?
+		/// Should the specified attribute type be generated in the doppleganger source?
 		/// </summary>
 		/// <param name="attributeType"></param>
 		/// <returns></returns>
@@ -840,10 +840,10 @@ namespace utils
 		/// Generate the assembly metedata attributes for the specified assembly.
 		/// Will not replicate strong named attributes, as this information is not available
 		/// and would be a violation of security restrictions.  Therefore, it is not entirely
-		/// possible to compile against a mock version of a strong-named assembly and then
+		/// possible to compile against a doppleganger version of a strong-named assembly and then
 		/// run the code unmodified with the actual assembly.  In order to run with a strong
 		/// named assembly, the application must be compiled with that strong named assembly
-		/// as a reference.  However, the mock version of the assembly can still be used as
+		/// as a reference.  However, the doppleganger version of the assembly can still be used as
 		/// a stand-in during the development cycle.  Just remember to do a final compile against
 		/// the real strong named assembly before final deployment.
 		/// </summary>
@@ -924,7 +924,7 @@ namespace utils
 		}
 
 		/// <summary>
-		/// Generate the mock interface for the assembly.
+		/// Generate the doppleganger interface for the assembly.
 		/// </summary>
 		/// <param name="typelibName"></param>
 		public void generate(string typelibName)
