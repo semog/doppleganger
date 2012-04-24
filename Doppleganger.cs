@@ -15,7 +15,6 @@
  * limitations under the License.
  */
 using System;
-using System.Linq;
 using System.Reflection;
 using System.Collections;
 using System.Collections.Generic;
@@ -42,7 +41,7 @@ namespace utils
 
             Doppleganger mg = new Doppleganger();
 
-            mg.generate(args[0]*);
+            mg.generate(args[0]);
         }
     }
 
@@ -128,13 +127,20 @@ namespace utils
             }
             else
             {
-                if (type.IsGenericType || type.FullName.Contains('`'))
+                if (type.IsGenericType || type.FullName.Contains("`"))
                 {
-                    var genericParams = type.GetGenericArguments();
-                    typeSig += String.Format("{0}<{1}>", 
-                        type.FullName.Substring(0, type.FullName.IndexOf('`')),
-                        String.Join(",", genericParams.ToList().Select(formatTypeName)));
-                }
+                    Type[] genericParams = type.GetGenericArguments();
+					ArrayList genericParamList = new ArrayList();
+
+					foreach(Type genericParam in genericParams)
+					{
+						genericParamList.Add(formatTypeName(genericParam));
+					}
+
+					typeSig += String.Format("{0}<{1}>",
+						type.FullName.Substring(0, type.FullName.IndexOf('`')),
+						String.Join(",", (string[]) genericParamList.ToArray(typeof(string))));
+				}
                 else
                 {
                     // Standard type
