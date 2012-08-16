@@ -15,6 +15,9 @@
  * limitations under the License.
  */
 using System;
+using System.Diagnostics;
+using System.IO;
+
 using System.Reflection;
 using System.Collections;
 using System.Collections.Generic;
@@ -22,6 +25,7 @@ using System.ComponentModel;
 
 namespace utils
 {
+
     /// <summary>
     /// Mock Interface Generator application.
     /// </summary>
@@ -39,9 +43,50 @@ namespace utils
                 return;
             }
 
+            DopplegangerConfiguration config = new DopplegangerConfiguration();
+            config.ParseFromArguments(args);
             Doppleganger mg = new Doppleganger();
 
-            mg.generate(args[0]);
+            mg.generate(config);
+        }
+    }
+
+    public class DopplegangerConfiguration
+    {
+        public string AssemblyPath { get; set; }
+
+        public List<string> IgnoredTypes { get; set; }
+
+        public bool DisableAssemblyInfo { get; set; }
+
+        public bool ForceVirtual { get; set; }
+
+        public bool UseTabs { get; set; }
+
+        public void ParseFromArguments(string[] args)
+        {
+            AssemblyPath = args[0];
+            IgnoredTypes = new List<string>();
+
+            foreach (string currentArg in args)
+            {
+                if (0 == string.Compare(currentArg, "-da", true))
+                {
+                    DisableAssemblyInfo = true;
+                }
+                else if (0 == string.Compare(currentArg, "-fv", true))
+                {
+                    ForceVirtual = true;
+                }
+                else if (0 == string.Compare(currentArg, "-t", true))
+                {
+                    UseTabs = true;
+                }
+                else
+                {
+                    IgnoredTypes.Add(currentArg);
+                }
+            }
         }
     }
 
@@ -50,13 +95,21 @@ namespace utils
     /// </summary>
     public class Doppleganger
     {
+        const string padTab = "\t";
+        const string padSpace = "    ";
+        private static bool padWithTabs = false;
         private int outputLevel = 0;
+
+        private static string indentFormat
+        {
+            get { return (padWithTabs ? padTab : padSpace); }
+        }
 
         private static void padToLevel(int padLevel)
         {
             for (int i = 0; i < padLevel; i++)
             {
-                Console.Write("   ");
+                Console.Write(indentFormat);
             }
         }
 
@@ -109,7 +162,6 @@ namespace utils
         private static string formatTypeName(Type type)
         {
             string typeSig = "";
-            bool isNullableType = false;
 
             // Check for void type
             if (type == null || type == typeof(void))
@@ -119,28 +171,24 @@ namespace utils
             else if (type.IsGenericType
                     && type.GetGenericTypeDefinition() == typeof(Nullable<>))
             {
-                // Nullable type
-                NullableConverter nullableType = new NullableConverter(type);
-
-                typeSig += nullableType.UnderlyingType.FullName;
-                isNullableType = true;
+                typeSig += "System.Nullable<" + type.GetGenericArguments()[0] + ">";
             }
             else
             {
                 if (type.IsGenericType || type.FullName.Contains("`"))
                 {
                     Type[] genericParams = type.GetGenericArguments();
-					ArrayList genericParamList = new ArrayList();
+                    ArrayList genericParamList = new ArrayList();
 
-					foreach(Type genericParam in genericParams)
-					{
-						genericParamList.Add(formatTypeName(genericParam));
-					}
+                    foreach (Type genericParam in genericParams)
+                    {
+                        genericParamList.Add(formatTypeName(genericParam));
+                    }
 
-					typeSig += String.Format("{0}<{1}>",
-						type.FullName.Substring(0, type.FullName.IndexOf('`')),
-						String.Join(",", (string[]) genericParamList.ToArray(typeof(string))));
-				}
+                    typeSig += String.Format("{0}<{1}>",
+                        type.FullName.Substring(0, type.FullName.IndexOf('`')),
+                        String.Join(",", (string[]) genericParamList.ToArray(typeof(string))));
+                }
                 else
                 {
                     // Standard type
@@ -152,11 +200,6 @@ namespace utils
             typeSig = typeSig.Replace('+', '.');
             // Remove IL reference syntax (out and ref)
             typeSig = typeSig.Trim(new char[] { '&' });
-            if (isNullableType)
-            {
-                typeSig += "?";
-            }
-
             return typeSig;
         }
 
@@ -195,7 +238,14 @@ namespace utils
             }
             else if (type.IsValueType)
             {
-                defaultSig += "new " + type.FullName + "()";
+                if (type.IsGenericType && type.GetGenericTypeDefinition() == typeof(Nullable<>))
+                {
+                    defaultSig += "new System.Nullable<" + type.GetGenericArguments()[0] + ">()";
+                }
+                else
+                {
+                    defaultSig += "new " + type.FullName + "()";
+                }
             }
             else if (type != typeof(void))
             {
@@ -289,7 +339,7 @@ namespace utils
                 paramNum++;
             }
 
-            outParams = (ParameterInfo[])outParamArray.ToArray(typeof(ParameterInfo));
+            outParams = (ParameterInfo[]) outParamArray.ToArray(typeof(ParameterInfo));
             return paramSig;
         }
 
@@ -299,7 +349,7 @@ namespace utils
 
             foreach (ParameterInfo paramInfo in outParams)
             {
-                outParamSig += "   param_" + paramInfo.Name + " = " + getDefaultValue(paramInfo.ParameterType.GetElementType()) + ";\n";
+                outParamSig += indentFormat + "param_" + paramInfo.Name + " = " + getDefaultValue(paramInfo.ParameterType.GetElementType()) + ";\n";
             }
 
             return outParamSig;
@@ -374,12 +424,51 @@ namespace utils
             return false;
         }
 
+        private Type[] removeBaseInterfaces(Type[] types)
+        {
+            List<Type> interfaces = new List<Type>();
+
+            for (int typeIndex = 0; typeIndex < types.Length; ++typeIndex)
+            {
+                Type curType = types[typeIndex];
+                bool isBasetype = false;
+
+                for (int srchIndex = 0; srchIndex < interfaces.Count; ++srchIndex)
+                {
+                    if (curType.IsAssignableFrom(types[srchIndex]))
+                    {
+                        isBasetype = true;
+                        break;
+                    }
+                }
+
+                if (!isBasetype)
+                {
+                    for (int srchIndex = typeIndex + 1; srchIndex < types.Length; ++srchIndex)
+                    {
+                        if (curType.IsAssignableFrom(types[srchIndex]))
+                        {
+                            isBasetype = true;
+                            break;
+                        }
+                    }
+                }
+
+                if (!isBasetype)
+                {
+                    interfaces.Add(curType);
+                }
+            }
+
+            return interfaces.ToArray();
+        }
+
         /// <summary>
         /// Declare a class, enum, or interface type.  Supports declaring nested types recursively.
         /// </summary>
         /// <param name="type"></param>
         /// <param name="nestedTypes"></param>
-        private void declareClass(Type type, Type[] nestedTypes)
+        private void declareClass(Type type, Type[] nestedTypes, bool forceVirtual)
         {
             string classSig = "";
 
@@ -400,10 +489,10 @@ namespace utils
                 classSig = "public struct ";
             }
 
-            Type[] interfaceInfos = filterPublicTypes(type.GetInterfaces());
+            Type[] interfaceInfos = removeBaseInterfaces(type.GetInterfaces());
+            bool setFirstInherit = false;
 
             classSig += type.Name;
-            bool setFirstInherit = false;
 
             if (type.BaseType != null && type.BaseType != typeof(object) && type.BaseType != typeof(ValueType))
             {
@@ -418,17 +507,20 @@ namespace utils
             {
                 foreach (Type intf in interfaceInfos)
                 {
-                    if (!setFirstInherit)
+                    if (intf.IsPublic)
                     {
-                        classSig += " : ";
-                        setFirstInherit = true;
-                    }
-                    else
-                    {
-                        classSig += ", ";
-                    }
+                        if (!setFirstInherit)
+                        {
+                            classSig += " : ";
+                            setFirstInherit = true;
+                        }
+                        else
+                        {
+                            classSig += ", ";
+                        }
 
-                    classSig += formatTypeName(intf);
+                        classSig += formatTypeName(intf);
+                    }
                 }
             }
 
@@ -453,7 +545,7 @@ namespace utils
                     && String.Compare(formatTypeName(nestedType.DeclaringType), currentTypeName) == 0)
                 {
                     // This is a nested type.
-                    declareType(nestedType, nestedTypes);
+                    declareType(nestedType, nestedTypes, forceVirtual);
                 }
             }
 
@@ -542,7 +634,7 @@ namespace utils
                         {
                             object defaultVal = fieldInfo.GetRawConstantValue();
 
-                            fieldSig += getEnumValueByIndex(fieldInfo.FieldType, (int)defaultVal);
+                            fieldSig += getEnumValueByIndex(fieldInfo.FieldType, (int) defaultVal);
                         }
                         else
                         {
@@ -569,7 +661,26 @@ namespace utils
                     propSig += "public ";
                 }
 
-                propSig += formatTypeName(propertyInfo.PropertyType) + " " + propertyInfo.Name;
+                if (!type.IsInterface && !type.IsValueType && forceVirtual)
+                {
+                    propSig += "virtual ";
+                }
+
+                string propertyName = propertyInfo.Name;
+
+                if (propertyName.Equals("Item") && propertyInfo.GetIndexParameters().Length > 0)
+                {
+                    propertyName = "this";
+                }
+
+                propSig += formatTypeName(propertyInfo.PropertyType) + " " + propertyName;
+                for (int propertyIndex = 0; propertyIndex < propertyInfo.GetIndexParameters().Length; ++propertyIndex)
+                {
+                    ParameterInfo parameterInfo = propertyInfo.GetIndexParameters()[propertyIndex];
+
+                    propSig += "[" + parameterInfo.ParameterType + " index" + propertyIndex + "]";
+                }
+
                 if (propertyInfo.CanRead || propertyInfo.CanWrite)
                 {
                     propSig += "\n{\n";
@@ -577,13 +688,11 @@ namespace utils
                     {
                         if (!type.IsInterface)
                         {
-                            propSig += "   get { ";
-                            propSig += formatReturnValue(propertyInfo.PropertyType);
-                            propSig += " }\n";
+                            propSig += indentFormat + "get { " + formatReturnValue(propertyInfo.PropertyType) + " }\n";
                         }
                         else
                         {
-                            propSig += "   get;\n";
+                            propSig += indentFormat + "get;\n";
                         }
                     }
 
@@ -591,11 +700,11 @@ namespace utils
                     {
                         if (!type.IsInterface)
                         {
-                            propSig += "   set { }\n";
+                            propSig += indentFormat + "set { }\n";
                         }
                         else
                         {
-                            propSig += "   set;\n";
+                            propSig += indentFormat + "set;\n";
                         }
                     }
 
@@ -618,6 +727,7 @@ namespace utils
                 }
 
                 string eventSig = "";
+
                 if (!type.IsInterface)
                 {
                     eventSig += "public ";
@@ -641,7 +751,10 @@ namespace utils
 
                 if (addAccessors)
                 {
-                    eventSig += "\n{\n   add { }\n   remove { }\n}";
+                    eventSig += "\n{\n";
+                    eventSig += indentFormat + "add { }\n";
+                    eventSig += indentFormat + "remove { }\n";
+                    eventSig += "}";
                 }
                 else
                 {
@@ -661,6 +774,7 @@ namespace utils
                 }
 
                 string methodInfoSig = "";
+
                 if (!type.IsInterface)
                 {
                     methodInfoSig += "public ";
@@ -668,7 +782,7 @@ namespace utils
                     {
                         methodInfoSig += "static ";
                     }
-                    else if (methodInfo.IsVirtual)
+                    else if (methodInfo.IsVirtual || forceVirtual)
                     {
                         if (methodInfo.GetBaseDefinition().DeclaringType != type)
                         {
@@ -683,18 +797,19 @@ namespace utils
 
                 switch (methodInfo.Name)
                 {
-                    case "op_Explicit":
-                        methodInfoSig += "explicit operator " + formatTypeName(methodInfo.ReturnType) + "(";
-                        break;
-                    case "op_Implicit":
-                        methodInfoSig += "implicit operator " + formatTypeName(methodInfo.ReturnType) + "(";
-                        break;
-                    default:
-                        methodInfoSig += formatTypeName(methodInfo.ReturnType) + " " + FormatMethodName(methodInfo.Name) + "(";
-                        break;
+                case "op_Explicit":
+                    methodInfoSig += "explicit operator " + formatTypeName(methodInfo.ReturnType) + "(";
+                    break;
+                case "op_Implicit":
+                    methodInfoSig += "implicit operator " + formatTypeName(methodInfo.ReturnType) + "(";
+                    break;
+                default:
+                    methodInfoSig += formatTypeName(methodInfo.ReturnType) + " " + FormatMethodName(methodInfo.Name) + "(";
+                    break;
                 }
 
                 ParameterInfo[] outParams;
+
                 methodInfoSig += formatParams(methodInfo.GetParameters(), out outParams);
                 methodInfoSig += ")";
 
@@ -713,13 +828,22 @@ namespace utils
                     string returnVal = formatReturnValue(methodInfo.ReturnType);
                     if (returnVal.Length > 0)
                     {
-                        methodInfoSig += "   " + returnVal + "\n";
+                        methodInfoSig += indentFormat + returnVal + "\n";
                     }
 
                     methodInfoSig += "}";
                 }
 
                 output(methodInfoSig);
+
+                // Evil evil HACK The second GetEnumerator Method is not recognized even though it's visible
+                // with IL Dasm. So we add it here to make the code compile
+                if (methodInfo.Name.Equals("GetEnumerator"))
+                {
+                    output("System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator()");
+                    output("{\n" + indentFormat + "throw new System.NotImplementedException();");
+                    output("}");
+                }
             }
 
             outputLevel--;
@@ -732,14 +856,16 @@ namespace utils
             {
                 return inputMethodName;
             }
+
             switch (inputMethodName)
             {
-                case "op_Equality":
-                    return "operator ==";
-                case "op_Inequality":
-                    return "operator !=";
-                // TODO - other operators
+            case "op_Equality":
+                return "operator ==";
+            case "op_Inequality":
+                return "operator !=";
+            // TODO - other operators
             }
+
             return inputMethodName;
         }
 
@@ -769,7 +895,7 @@ namespace utils
         /// </summary>
         /// <param name="type"></param>
         /// <param name="nestedTypes"></param>
-        private void declareType(Type type, Type[] nestedTypes)
+        private void declareType(Type type, Type[] nestedTypes, bool forceVirtual)
         {
             if (type.BaseType == typeof(System.Delegate) || type.BaseType == typeof(System.MulticastDelegate))
             {
@@ -777,7 +903,7 @@ namespace utils
             }
             else
             {
-                declareClass(type, nestedTypes);
+                declareClass(type, nestedTypes, forceVirtual);
             }
         }
 
@@ -798,7 +924,7 @@ namespace utils
                 }
             }
 
-            return (Type[])nestedTypes.ToArray(typeof(Type));
+            return (Type[]) nestedTypes.ToArray(typeof(Type));
         }
 
         /// <summary>
@@ -818,14 +944,14 @@ namespace utils
                 }
             }
 
-            return (Type[])nestedTypes.ToArray(typeof(Type));
+            return (Type[]) nestedTypes.ToArray(typeof(Type));
         }
 
         /// <summary>
         /// Generate the types for the specified assembly.
         /// </summary>
         /// <param name="importlib"></param>
-        protected void generateTypes(Assembly importlib)
+        protected void generateTypes(Assembly importlib, DopplegangerConfiguration config)
         {
             Type[] importlibTypes = importlib.GetExportedTypes();
             Type[] nestedTypes = filterNestedTypes(importlibTypes);
@@ -835,6 +961,16 @@ namespace utils
             {
                 if (!type.IsNested)
                 {
+                    if (config.IgnoredTypes.Contains(type.Namespace))
+                    {
+                        continue;
+                    }
+
+                    if (config.IgnoredTypes.Contains(type.ToString()))
+                    {
+                        continue;
+                    }
+
                     if (type.Namespace != currentNamespace)
                     {
                         if (currentNamespace != null)
@@ -852,7 +988,7 @@ namespace utils
                         }
                     }
 
-                    declareType(type, nestedTypes);
+                    declareType(type, nestedTypes, config.ForceVirtual);
                 }
             }
 
@@ -889,7 +1025,8 @@ namespace utils
             if (attributeType == typeof(AssemblyCopyrightAttribute)
                 || attributeType == typeof(AssemblyKeyFileAttribute)
                 || attributeType == typeof(AssemblyKeyNameAttribute)
-                || attributeType == typeof(AssemblyDelaySignAttribute))
+                || attributeType == typeof(AssemblyDelaySignAttribute)
+                || attributeType == typeof(DebuggableAttribute))
             {
                 return false;
             }
@@ -948,7 +1085,15 @@ namespace utils
                         {
                             if (argument.Value != null)
                             {
-                                attributeSig += formatTypeName(argument.Value.GetType()) + "." + argument.Value;
+                                foreach (object val in Enum.GetValues(argument.ArgumentType))
+                                {
+                                    if (val == argument.Value)
+                                    {
+                                        string name = Enum.GetName(argument.ArgumentType, val);
+
+                                        attributeSig += argument.ArgumentType + name;
+                                    }
+                                }
                             }
                         }
                         else if (argument.ArgumentType == typeof(bool))
@@ -993,9 +1138,40 @@ namespace utils
         protected Assembly reflectionOnlyAssemblyResolveHandler(object sender, ResolveEventArgs args)
         {
             // Load the assembly by assembly name so we can find its physical location.
-            Assembly assembly = Assembly.Load(args.Name);
+            Assembly assembly = null;
+            Assembly reflectedAssembly = null;
+
+            try
+            {
+                assembly = Assembly.Load(args.Name);
+            }
+            catch (FileNotFoundException)
+            {
+            }
+
+#if NET_4_0
+            if (null == assembly)
+            {
+                try
+                {
+                    string directory = Path.GetDirectoryName(args.RequestingAssembly.Location);
+                    string assemblyFileName = args.Name.Substring(0, args.Name.IndexOf(',')) + ".dll";
+                    string possibleAssemblyPath = Path.Combine(directory, assemblyFileName);
+
+                    assembly = Assembly.ReflectionOnlyLoadFrom(possibleAssemblyPath);
+                }
+                catch (FileNotFoundException)
+                {
+                }
+            }
+#endif
+
             // Load the assembly in reflection only mode.
-            Assembly reflectedAssembly = Assembly.ReflectionOnlyLoadFrom(assembly.Location);
+            if (null != assembly)
+            {
+                reflectedAssembly = Assembly.ReflectionOnlyLoadFrom(assembly.Location);
+            }
+
             return reflectedAssembly;
         }
 
@@ -1003,9 +1179,10 @@ namespace utils
         /// Generate the doppleganger interface for the assembly.
         /// </summary>
         /// <param name="typelibName"></param>
-        public void generate(string typelibName)
+        public void generate(DopplegangerConfiguration config)
         {
-            Assembly importlib = Assembly.ReflectionOnlyLoadFrom(typelibName);
+            padWithTabs = config.UseTabs;
+            Assembly importlib = Assembly.ReflectionOnlyLoadFrom(config.AssemblyPath);
 
             // Capture any assembly resolve problems and dynamically load the dependent assembly.
             AppDomain.CurrentDomain.ReflectionOnlyAssemblyResolve += reflectionOnlyAssemblyResolveHandler;
@@ -1035,8 +1212,12 @@ namespace utils
             output(" * See http://code.google.com/p/doppleganger/ for more information.");
             output(" */");
 
-            generateAssemblyInfo(importlib);
-            generateTypes(importlib);
+            if (!config.DisableAssemblyInfo)
+            {
+                generateAssemblyInfo(importlib);
+            }
+
+            generateTypes(importlib, config);
         }
     }
 }
